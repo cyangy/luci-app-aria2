@@ -1,0 +1,477 @@
+diff -Nuar a/applications/luci-aria2/luasrc/controller/aria2.lua b/applications/luci-aria2/luasrc/controller/aria2.lua
+--- a/applications/luci-aria2/luasrc/controller/aria2.lua  1970-01-01 08:00:00.000000000 +0800
++++ b/applications/luci-aria2/luasrc/controller/aria2.lua	2012-12-07 20:56:25.000000000 +0800
+@@ -0,0 +1,27 @@
++--[[
++LuCI - Lua Configuration Interface - Aria2 support
++
++Script by animefans_xj @ nowvideo.dlinkddns.com (af_xj@yahoo.com.cn)
++
++Licensed under the Apache License, Version 2.0 (the "license");
++you may not use this file except in compliance with the License.
++you may obtain a copy of the License at
++
++	http://www.apache.org/licenses/LICENSE-2.0
++
++$Id$
++]]--
++
++module("luci.controller.aria2",package.seeall)
++
++function index()
++	require("luci.i18n")
++	luci.i18n.loadc("aria2")
++	if not nixio.fs.access("/etc/config/Aria2_Config") then
++		return
++	end
++	
++	local page = entry({"admin","services","aria2"},cbi("aria2"),_("Aria2 Downloader"))
++	page.i18n="aria2"
++	page.dependent=true
++end
+diff -Nuar a/applications/luci-aria2/luasrc/model/cbi/aria2.lua b/applications/luci-aria2/luasrc/model/cbi/aria2.lua
+--- a/applications/luci-aria2/luasrc/model/cbi/aria2.lua	1970-01-01 08:00:00.000000000 +0800
++++ b/applications/luci-aria2/luasrc/model/cbi/aria2.lua	2012-12-07 22:24:05.000000000 +0800
+@@ -0,0 +1,233 @@
++--[[
++LuCI - Lua Configuration Interface - aria2 support
++
++Script by animefans_xj @ nowvideo.dlinkddns.com (af_xj@yahoo.com.cn)
++Based on luci-app-transmission and luci-app-upnp also based on the idea of luci-app-samba's taboption 
++ Thanks  RA-MOD http://www.right.com.cn/forum/thread-108826-1-1.html
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++	http://www.apache.org/licenses/LICENSE-2.0
++							2012.12.08  Final Edtion
++
++$Id$
++]]--
++
++require("luci.sys")
++require("luci.util")
++local fs = require "nixio.fs"
++local vl = require "nixio.fs"
++
++local running=(luci.sys.call("pidof aria2c > /dev/null") == 0)
++local button=""
++if running then
++	button="&nbsp;&nbsp;&nbsp;&nbsp;<input type=\"button\" value=\" " .. translate("Open Web Interface") .. " \" onclick=\"window.open('http://'+window.location.host+'/Aria2')\"/>"
++	m = Map("Aria2_Config", translate("Aria2 Downloader"), translate("Aria2 Is Running,Use this page, you can download files from HTTP FTP and BitTorrent via Aria2.") .. button)
++    else
++	m = Map("Aria2_Config", translate("Aria2 Downloader"), translate("Aria2 Is Not Running,Please Check Out What Happend By View System Log"))
++end
++--[[ "Aria2_Config" 指定要打开的配置文件位置,详情访问http://luci.subsignal.org/trac/wiki/Documentation/ModulesHowTo]]--
++					--[[Global Table ]]--
++s = m:section(TypedSection, "aria2" ,translate("Aria2 Downloader Center Table"))
++s.addremove = false
++s.anonymous = true
++--[[定义列表]]--
++s:tab("Global",  translate("Global"))
++s:tab("Location",  translate("Location"))
++s:tab("Task",  translate("Task"))
++s:tab("Network",  translate("Network"))
++s:tab("Advance",  translate("Advance"))
++s:tab("RPC",  translate("RPC"))
++s:tab("Editconf",  translate("Edit Extra Configuration"))
++s:tab("LogView",  translate("View The Log File"))
++
++
++--[[enable]]--
++enable = s:taboption("Global", Flag, "enabled", translate("Enabled"))
++enable.rmempty = false
++
++--[[User]]--
++user = s:taboption("Global", ListValue, "user", translate("Run as"), translate("Run daemon as user"))
++local list_user
++for _, list_user in luci.util.vspairs(luci.util.split(luci.sys.exec("cat /etc/passwd | cut -f 1 -d :"))) do
++	user:value(list_user)
++end
++--[[log Enable]]--
++logEnable = s:taboption("Global", Flag,"logEnable",translate("Log Enabled"),translate("Enable log"))
++logEnable.rmempty = false
++
++--[[log Size]]--
++logSize = s:taboption("Global",  Value,"logSize",translate("Log Size"), translate("Bytes"))
++logSize:depends("logEnable",1)
++logSize:value("64000", translate("64KB"))
++logSize:value("128000", translate("128KB"))
++logSize:value("256000", translate("256KB"))
++logSize:value("512000", translate("512KB"))
++logSize.rmempty=false
++logSize.placeholder="256000"
++
++--[[check_integrity]]--
++check_integrity = s:taboption("Global",  Flag,"check_integrity",translate("Check Integrity"),translate("Check file integrity by validating piece hashes or a hash of entire file"))
++check_integrity.rmempty = false
++
++--[[Continue?]]--
++Continue = s:taboption("Global",  Flag,"Continue",translate("Continue"),translate("Continue downloading a partially downloaded file."))
++Continue.rmempty = false
++
++--[[file_allocation : aria2 param : file_allocation ]]--
++file_allocation = s:taboption("Global",  Value, "file_allocation", translate("File Allocation"), translate("none: doesn't pre-allocate file space. prealloc:pre-allocates file space before download begins.This may take some time depending on the size ofthe file.If you are using newer file systems such as ext4(with extents support), btrfs, xfs or NTFS(MinGW build only), falloc is your bestchoice. It allocates large(few GiB) filesalmost instantly. Don't use falloc with legacyfile systems such as ext3 and FAT32 because ittakes almost same time as prealloc and itblocks aria2 entirely until allocation finishes.falloc may not be available if your system doesn't have posix_fallocate() function.trunc : uses ftruncate() system call or platform-specific counterpart to truncate a file to a specified length."))
++file_allocation:value("none","none")
++file_allocation:value("prealloc","prealloc")
++file_allocation:value("trunc","trunc")
++file_allocation:value("falloc","falloc")
++file_allocation.rmempty=false
++file_allocation.placeholder="falloc"
++
++--[[disk_cache : aria2 param : disk_cache ]]--
++disk_cache = s:taboption("Global",  Value, "disk_cache", translate("Disk Cache"), translate("Disk Cache Size"))
++disk_cache:value("1M","1M")
++disk_cache:value("2M","2M")
++disk_cache:value("3M","3M")
++disk_cache.rmempty=false
++disk_cache.placeholder="1M"
++
++--[[min_split_size : aria2 param : min_split_size]]--
++min_split_size = s:taboption("Global",  Value, "min_split_size", translate("Min split size"), translate("MB The min size to split the file to pieces to download"))
++min_split_size:value("10M","10M")
++min_split_size:value("20M","20M")
++min_split_size:value("30M","30M")
++min_split_size.rmempty = false
++min_split_size.placeholder = "30M"
++
++						--[[Location]]--
++config_dir = s:taboption("Location",  Value,"config_dir",translate("Config Directory"))
++config_dir.placeholder = "/mnt/MountPoint/Aria2/.Aria2_Config"
++download_dir = s:taboption("Location",  Value,"download_dir",translate("Download Directory"))
++download_dir.placeholder = "/mnt/MountPoint/Aria2"
++aria2_extra_config_file = s:taboption("Location",  Value, "aria2_extra_config_file",translate("Extra Config File"),translate("Add Extra Config Which Not Include In The Aria2_Config File"))
++aria2_extra_config_file.placeholder = "/mnt/MountPoint/Aria2/.Aria2_Config/Aria2_Extra_Config_File.conf"
++
++						--[[Task]]--
++--[[restortask]]--
++restore_task = s:taboption("Task", Flag, "restore_task", translate("Restore unfinished task when boot"))
++restore_task.rmempty = false
++
++--[[load_cookies]]--
++load_cookies = s:taboption("Task", Flag, "load_cookies", translate("Load Cookies from FILE using the Firefox3 format and Mozilla/Firefox(1.x/2.x)/Netscape format.(Aria2Cookies.cookies)"))
++load_cookies.rmempty = false
++
++--[[ save_interval : aria2 param : --auto-save-interval ]]--
++save_interval = s:taboption("Task", Value, "save_interval", translate("Save interval"), translate("In seconds, 0 means unsave and let tasks can't be restore"))
++save_interval:value("5", translate("5s"))
++save_interval:value("10", translate("10s"))
++save_interval:value("20", translate("20s"))
++save_interval:value("30", translate("30s"))
++save_interval:value("40", translate("40s"))
++save_interval:value("50", translate("50s"))
++save_interval:value("60", translate("60s"))
++save_interval.rmempty = true
++save_interval.placeholder ="60"
++save_interval.datatype = "range(0,600)"
++
++--[[ queue_size : aria2 param : -j ]]--
++queue_size = s:taboption("Task", Value, "queue_size", translate("Download queue size"))
++queue_size:value("1","1")
++queue_size:value("2","2")
++queue_size:value("3","3")
++queue_size:value("4","4")
++queue_size:value("5","5")
++queue_size.rmempty = true
++queue_size.placeholder = "2"
++queue_size.datatype = "range(1,20)"
++
++--[[ Split : aria2 param : -s ]]--
++Split = s:taboption("Task", Value, "Split", translate("Blocks of per task"))
++Split:value("1","1")
++Split:value("2","2")
++Split:value("3","3")
++Split:value("4","4")
++Split:value("5","5")
++Split:value("6","6")
++Split:value("7","7")
++Split:value("8","8")
++Split:value("9","9")
++Split.rmempty = true
++Split.placeholder = "5"
++Split.datatype = "range(1,20)"
++--[[ thread : aria2 param : -x ]]--
++thread = s:taboption("Task", ListValue, "thread", translate("Download threads of per server"))
++thread:value("1","1")
++thread:value("2","2")
++thread:value("3","3")
++thread:value("4","4")
++thread:value("5","5")
++thread:value("6","6")
++thread:value("7","7")
++thread:value("8","8")
++thread:value("9","9")
++thread:value("10","10")
++					--[[Network]]--
++disable_ipv6 = s:taboption("Network", Flag, "disable_ipv6", translate("Disable IPv6"))
++disable_ipv6.rmempty = false
++enable_lpd = s:taboption("Network", Flag, "enable_lpd", translate("Enable Local Peer Discovery"))
++enable_lpd.rmempty = false
++enable_dht = s:taboption("Network", Flag, "enable_dht", translate("Enable DHT Network"))
++enable_dht.rmempty = false
++listen_port = s:taboption("Network", Value, "listen_port", translate("Port for BitTorrent"))
++listen_port.placeholder = "51413"
++listen_port.datatype = "range(1,65535)"
++download_speed = s:taboption("Network", Value, "download_speed", translate("Download speed limit"), translate("In KB/S, 0 means unlimit"))
++download_speed.placeholder = "0"
++download_speed.datatype = "range(0,100000)"
++upload_speed = s:taboption("Network", Value, "upload_speed", translate("Upload speed limit"), translate("In KB/S, 0 means unlimit"))
++upload_speed.placeholder = "0"
++upload_speed.datatype="range(0,100000)"
++					--[[RPC]]--
++rpc_auth = s:taboption("RPC", Flag, "rpc_auth", translate("Use RPC Auth"))
++rpc_auth.rmempty = false
++rpc_user = s:taboption("RPC", Value, "rpc_user", translate("User name"))
++rpc_user.placeholder = "admin"
++rpc_user:depends("rpc_auth",1)
++rpc_password = s:taboption("RPC", Value, "rpc_password",  translate("Password"))
++rpc_password.placeholder = "admin"
++rpc_password:depends("rpc_auth",1)
++					--[[Advance]]--
++extra_cmd = s:taboption("Advance", Flag, "extra_cmd", translate("add extra commands"))
++extra_cmd.rmempty=false
++cmd_line = s:taboption("Advance", Value, "cmd_line", translate("Command-Lines"),translate("To check all commands availabled, visit:") .. "&nbsp;<a onclick=\"window.open('http://'+window.location.host+'/Aria2/help.html')\" style=\"cursor:pointer\"><font color='blue'><u>点击获取本地帮助</u></font></a>"  .. "&nbsp;<a onclick=\"window.open('http://aria2.sourceforge.net/manual/en/html/aria2c.html')\" style=\"cursor:pointer\"><font color='green'><u>点击获取在线帮助</u></font></a>")
++cmd_line:depends("extra_cmd",1)
++
++
++					--[[Edit Extra Configuration ]]--
++Editconf = s:taboption("Editconf", Value, "_tmpl", translate("You can customize aria2 configuration here"), translate("Comment Using #"))
++Editconf.template = "cbi/tvalue"
++Editconf.rows = luci.util.cmatch(luci.sys.exec("cat /mnt/MountPoint/Aria2/.Aria2_Config/Aria2_Extra_Config_File.conf"),  "\n")+1
++Editconf.wrap = "off"
++
++function Editconf.cfgvalue(self, section)
++	return fs.readfile("/mnt/MountPoint/Aria2/.Aria2_Config/Aria2_Extra_Config_File.conf") or ""
++end
++function Editconf.write(self, section, value)
++	if value then
++		value = value:gsub("\r\n?", "\n")
++		fs.writefile("/tmp/Aria2_Extra_Config_File.conf", value)
++		if (luci.sys.call("cmp -s /tmp/Aria2_Extra_Config_File.conf /mnt/MountPoint/Aria2/.Aria2_Config/Aria2_Extra_Config_File.conf") == 1) then
++			fs.writefile("/mnt/MountPoint/Aria2/.Aria2_Config/Aria2_Extra_Config_File.conf",   value)
++		end
++		fs.remove("/tmp/Aria2_Extra_Config_File.conf")
++	end
++end
++
++				--[[Log  View ]]--
++Logview = s:taboption("LogView", Value, "_tmpl")
++Logview.template = "cbi/tvalue"
++Logview.wrap = "off"                              
++Logview.readonly = "readonly"
++Logview.rows = luci.util.cmatch(luci.sys.exec("cat /mnt/MountPoint/Aria2/.Aria2_Config/Aria2Log.txt"),  "\n")+1
++
++function Logview.cfgvalue(self, section)
++	return vl.readfile("/mnt/MountPoint/Aria2/.Aria2_Config/Aria2Log.txt") or ""
++end
++
++return m
+diff -Nuar a/applications/luci-aria2/Makefile b/applications/luci-aria2/Makefile
+--- a/applications/luci-aria2/Makefile	1970-01-01 08:00:00.000000000 +0800
++++ b/applications/luci-aria2/Makefile	2012-12-07 20:56:25.000000000 +0800
+@@ -0,0 +1,4 @@
++PO = aria2
++
++include ../../build/config.mk
++include ../../build/module.mk
+diff -Nuar a/po/zh_CN/aria2.po b/po/zh_CN/aria2.po
+--- a/po/zh_CN/aria2.po	1970-01-01 08:00:00.000000000 +0800
++++ b/po/zh_CN/aria2.po	2012-12-07 22:24:02.000000000 +0800
+@@ -0,0 +1,197 @@
++msgid ""
++msgstr ""
++"Report-Msgid-Bugs-To: \n"
++"POT-Creation-Date: 2012-10-31 11:45+0800\n"
++"PO-Revision-Date: 2012-11-10 23:20+0800\n"
++"Last-Translator: 穿越蓝天 <af_xj@yahoo.com.cn>\n"
++"Language: cn\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++"X-Generator: Poedit 1.5.4\n"
++"Project-Id-Version: \n"
++"Language-Team: \n"
++
++msgid "Aria2 Downloader"
++msgstr "Aria2 配置中心"
++
++msgid "Open Web Interface"
++msgstr "打开Web控制中心"
++
++msgid "Clich here to get detail help"
++msgstr "获取本地帮助"
++
++msgid "Use this page, you can download files from HTTP FTP and BitTorrent via Aria2."
++msgstr "你可以利用Aria2来通过HTTP、FTP以及BitTorrent下载文件"
++
++msgid "Global"
++msgstr "全局"
++
++msgid "Enabled"
++msgstr "启用"
++
++msgid "Run daemon as user"
++msgstr "以此身份运行"
++
++msgid "Log Enabled"
++msgstr "启用日志"
++
++msgid "Enable log"
++msgstr "开启日志记录"
++
++msgid "Continue"
++msgstr "继续未完成下载"
++
++msgid "Continue downloading a partially downloaded file."
++msgstr "继续下载上次中断的任务"
++
++msgid "Check Integrity"
++msgstr "文件校验"
++
++msgid "Run as"
++msgstr "以该身份运行"
++
++msgid "Check file integrity by validating piece hashes or a hash of entire file"
++msgstr "通过Hash检查文件完整性"
++
++msgid "File Allocation"
++msgstr "文件预分配"
++
++msgid "none: doesn't pre-allocate file space. prealloc:pre-allocates file space before download begins.This may take some time depending on the size ofthe file.If you are using newer file systems such as ext4(with extents support), btrfs, xfs or NTFS(MinGW build only), falloc is your bestchoice. It allocates large(few GiB) filesalmost instantly. Don't use falloc with legacyfile systems such as ext3 and FAT32 because ittakes almost same time as prealloc and itblocks aria2 entirely until allocation finishes.falloc may not be available if your system doesn't have posix_fallocate() function.trunc : uses ftruncate() system call or platform-specific counterpart to truncate a file to a specified length."
++msgstr "none: doesn't pre-allocate file space. prealloc:pre-allocates file space before download begins.This may take some time depending on the size ofthe file.If you are using newer file systems such as ext4(with extents support), btrfs, xfs or NTFS(MinGW build only), falloc is your bestchoice. It allocates large(few GiB) filesalmost instantly. Don't use falloc with legacyfile systems such as ext3 and FAT32 because ittakes almost same time as prealloc and itblocks aria2 entirely until allocation finishes.falloc may not be available if your system doesn't have posix_fallocate() function.trunc : uses ftruncate() system call or platform-specific counterpart to truncate a file to a specified length."
++
++
++
++msgid "Disk Cache"
++msgstr "磁盘缓存"
++
++msgid "Disk Cache Size"
++msgstr "磁盘缓存的大小"
++
++msgid "Extra Config File"
++msgstr "额外的配置"
++
++msgid "Add Extra Config Which Not Include In The Aria2_Config File"
++msgstr "添加配置文件 Aria2_Config 中未定义的选项"
++
++msgid "You can customize aria2 configuration here"
++msgstr "编辑额外的配置选项"
++
++msgid "Comment Using #"
++msgstr "以#开头的行被注释"
++
++msgid "Aria2 Is Running,Use this page, you can download files from HTTP FTP and BitTorrent via Aria2."
++msgstr "Aria2 运行中,你可以利用Aria2来通过HTTP、FTP以及BitTorrent下载文件"
++
++msgid "Aria2 Is Not Running,Please Check Out What Happend By View System Log"
++msgstr "Aria2 没有运行，请查看系统日志"
++
++msgid "RPC"
++msgstr "远程控制"
++
++msgid "Aria2 Downloader Center Table"
++msgstr "Aria2 设置选项"
++
++msgid "Edit Extra Configuration"
++msgstr "额外配置"
++
++msgid "Min split size"
++msgstr "分割文件阈值"
++
++msgid "MB The min size to split the file to pieces to download"
++msgstr "单位：MB 当大于指定值时使用分块下载"
++
++msgid "Load Cookies from FILE using the Firefox3 format and Mozilla/Firefox(1.x/2.x)/Netscape format.(Aria2Cookies.cookies)"
++msgstr "加载Cookies"
++
++msgid "Location"
++msgstr "位置"
++
++msgid "Config Directory"
++msgstr "配置目录"
++
++msgid "Download Directory"
++msgstr "下载目录"
++
++msgid "Task"
++msgstr "任务"
++
++msgid "Restore unfinished task when boot"
++msgstr "启动时继续未完成的任务"
++
++msgid "Save interval"
++msgstr "保存进度间隔"
++
++msgid "In seconds, 0 means unsave and let tasks can't be restore"
++msgstr "以秒为单位，0表示不保存并使任务无法续传"
++
++msgid "Download queue size"
++msgstr "下载队列大小"
++
++msgid "Blocks of per task"
++msgstr "任务分块"
++
++msgid "Download threads of per server"
++msgstr "每个服务器线程数"
++
++msgid "Network"
++msgstr "网络"
++
++msgid "Disable IPv6"
++msgstr "禁用IPv6"
++
++msgid "Blocklists"
++msgstr "屏蔽列表"
++
++msgid "Enable Local Peer Discovery"
++msgstr "启用本地用户发现"
++
++msgid "Enable DHT Network"
++msgstr "启用DHT网络获取更多源"
++
++msgid "Port for BitTorrent"
++msgstr "BitTorrent端口"
++
++msgid "Download speed limit"
++msgstr "下载速度限制"
++
++msgid "Upload speed limit"
++msgstr "上传速度限制"
++
++msgid "In KB/S, 0 means unlimit"
++msgstr "以KB为单位，0表示不限制"
++
++msgid "Remote Control"
++msgstr "远程控制"
++
++msgid "Use RPC Auth"
++msgstr "需要登录"
++
++msgid "User name"
++msgstr "用户名"
++
++msgid "Password"
++msgstr "密码"
++
++msgid "Advance"
++msgstr "高级"
++
++msgid "add extra commands"
++msgstr "附加命令"
++
++msgid "Command-Lines"
++msgstr "命令行"
++
++msgid "To check all commands availabled, visit:"
++msgstr "获取最新帮助:"
++
++
++msgid "View The Log File"
++msgstr "查看日志"
++
++msgid "Log Size"
++msgstr "日志大小"
++
++msgid "Bytes"
++msgstr "单位:字节"
